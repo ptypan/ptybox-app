@@ -219,10 +219,16 @@ def main():
     ap.add_argument("--variant", default=os.environ.get("PTYBOX_BOOTSTRAP_PACKAGE_VARIANT", "apt-android-7"))
     args = ap.parse_args()
 
-    out_dir = os.environ.get("PTYBOX_BOOTSTRAP_OUTPUT_DIR")
-    cache_dir = os.environ.get("PTYBOX_BOOTSTRAP_CACHE_DIR", os.path.join(ROOT, "build", "ptybox-bootstrap-cache"))
-    if not out_dir:
-        raise SystemExit("Falta PTYBOX_BOOTSTRAP_OUTPUT_DIR (debe ser el directorio del modulo app)")
+    # Valores por defecto pensados para el repo: asi el script funciona igual
+    # invocado por el task Gradle (que los exporta), desde la CLI y desde CI.
+    #   <repo>/app                                -> modulo app
+    #   <repo>/build/ptybox-bootstrap-cache       -> cache de los zips oficiales
+    repo_root = os.path.dirname(HERE)
+    out_dir = os.environ.get("PTYBOX_BOOTSTRAP_OUTPUT_DIR") or os.path.join(repo_root, "app")
+    cache_dir = os.environ.get("PTYBOX_BOOTSTRAP_CACHE_DIR") or \
+        os.path.join(repo_root, "build", "ptybox-bootstrap-cache")
+    if not os.path.isdir(out_dir):
+        raise SystemExit(f"PTYBOX_BOOTSTRAP_OUTPUT_DIR no es un directorio: {out_dir}")
 
     if args.variant not in VARIANTS:
         raise SystemExit(f"TERMUX_PACKAGE_VARIANT no soportado: {args.variant}")
