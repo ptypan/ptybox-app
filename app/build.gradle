@@ -231,10 +231,13 @@ task patchBootstraps {
             "PTYBOX_BOOTSTRAP_OUTPUT_DIR": projectDir.absolutePath,
             "PTYBOX_BOOTSTRAP_CACHE_DIR"  : rootProject.file("build/ptybox-bootstrap-cache").absolutePath
         ]
-        def proc = new ProcessBuilder(["python3", patcher.absolutePath])
-        proc.environment().putAll(env)
-        proc.inheritIO()
-        proc.directory(rootProject.projectDir)
+        // ProcessBuilder no tiene waitFor(): hay que start() para obtener el
+        // Process. Con inheritIO() la salida del script se ve en el log de CI.
+        def builder = new ProcessBuilder(["python3", patcher.absolutePath])
+        builder.environment().putAll(env)
+        builder.inheritIO()
+        builder.directory(rootProject.projectDir)
+        def proc = builder.start()
         def exitCode = proc.waitFor()
         if (exitCode != 0)
             throw new GradleException("patch_bootstrap.py fallo con codigo " + exitCode)
