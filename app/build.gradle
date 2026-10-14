@@ -47,11 +47,11 @@ if (!hasReleaseSigning) {
 }
 
 android {
+    // El namespace de Java coincide con el applicationId (declarado mas abajo,
+    // en defaultConfig) para que las clases que TermuxConstants construye por
+    // concatenacion - TERMUX_SERVICE_NAME, RUN_COMMAND_SERVICE_NAME... -
+    // resuelvan a clases que existen de verdad en el APK.
     namespace "com.ptybox"
-    // F1B: el paquete Android es nuestro. El namespace de Java coincide con el
-    // applicationId para que TermuxConstants.*_ACTIVITY_NAME / *_SERVICE_NAME
-    // (que se derivan de TERMUX_PACKAGE_NAME) resuelvan a clases reales.
-    applicationId "com.ptybox"
 
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
     def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
@@ -78,6 +78,10 @@ android {
     }
 
     defaultConfig {
+        // Upstream no lo declaraba: el applicationId caia en el namespace
+        // ("com.termux"). Aqui es explicito.
+        applicationId "com.ptybox"
+
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
         versionCode 1180
