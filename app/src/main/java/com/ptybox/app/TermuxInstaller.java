@@ -412,7 +412,7 @@ final class TermuxInstaller {
             return out.toByteArray();
         } catch (IOException e) {
             Logger.logError(LOG_TAG, "Failed to read bootstrap asset \"" + assetName + "\": " + e.getMessage());
-            Logger.logStackTrace(LOG_TAG, "Bootstrap asset read error", e);
+            Logger.logStackTraceWithMessage(LOG_TAG, "Bootstrap asset read error", e);
             return null;
         } finally {
             if (inputStream != null) {

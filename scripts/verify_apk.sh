@@ -18,6 +18,14 @@ set -uo pipefail
 APK="${1:?uso: verify_apk.sh <apk> [paquete]}"
 EXPECTED_PKG="${2:-com.ptybox}"
 FORBIDDEN_PKG="${FORBIDDEN_PKG:-com.termux}"
+# La API (com.ptybox.api) comparte sharedUserId=com.ptybox con la app y sus
+# providers cuelgan de com.ptybox, no de com.ptybox.api. Se personaliza con:
+#   PTYBOX_EXPECTED_SHAREDUID=com.ptybox
+#   PTYBOX_EXPECTED_PROVIDERS="com.ptybox.sharedfiles"
+#   PTYBOX_SKIP_PERMISSION_CHECK=1  (la API usa RUN_COMMAND, no lo define)
+EXPECTED_SHAREDUID="${PTYBOX_EXPECTED_SHAREDUID:-$EXPECTED_PKG}"
+PROVIDER_LIST="${PTYBOX_EXPECTED_PROVIDERS:-${EXPECTED_PKG}.files ${EXPECTED_PKG}.documents}"
+SKIP_PERMISSION_CHECK="${PTYBOX_SKIP_PERMISSION_CHECK:-0}"
 
 FAIL=0
 ok()  { printf '  \033[32mOK\033[0m   %s\n' "$*"; }
@@ -61,10 +69,16 @@ else
 fi
 
 # --- 3. Permisos --------------------------------------------------------------
-if grep -q "${EXPECTED_PKG}\.permission\.RUN_COMMAND" <<< "$BADGING"; then
-    ok "permiso ${EXPECTED_PKG}.permission.RUN_COMMAND declarado"
+# La API no define RUN_COMMAND (lo define la app principal): se omite con
+# PTYBOX_SKIP_PERMISSION_CHECK=1.
+if [ "${SKIP_PERMISSION_CHECK}" = "1" ]; then
+    echo "  ---   comprobacion del permiso RUN_COMMAND omitida"
 else
-    bad "falta el permiso ${EXPECTED_PKG}.permission.RUN_COMMAND"
+    if grep -q "${EXPECTED_PKG}\.permission\.RUN_COMMAND" <<< "$BADGING"; then
+        ok "permiso ${EXPECTED_PKG}.permission.RUN_COMMAND declarado"
+    else
+        bad "falta el permiso ${EXPECTED_PKG}.permission.RUN_COMMAND"
+    fi
 fi
 if grep -q "${FORBIDDEN_PKG}\.permission\.RUN_COMMAND" <<< "$BADGING"; then
     bad "permiso ${FORBIDDEN_PKG}.permission.RUN_COMMAND presente: colisionaria con Termux"
@@ -74,18 +88,18 @@ fi
 
 # --- 4. sharedUserId ----------------------------------------------------------
 SHARED_UID="$(grep -A2 'sharedUserId' <<< "$MANIFEST_TREE" | grep -oE 'Raw: "[^"]+"' | head -1)"
-if grep -q "Raw: \"${EXPECTED_PKG}\"" <<< "$MANIFEST_TREE"; then
-    ok "sharedUserId = ${EXPECTED_PKG}"
+if grep -q "Raw: \"${EXPECTED_SHAREDUID}\"" <<< "$MANIFEST_TREE"; then
+    ok "sharedUserId = ${EXPECTED_SHAREDUID}"
 else
-    bad "sharedUserId inesperado: ${SHARED_UID:-<sin sharedUserId>}"
+    bad "sharedUserId inesperado: ${SHARED_UID:-<sin sharedUserId>} (esperado ${EXPECTED_SHAREDUID})"
 fi
 
 # --- 5. Authorities de los providers -----------------------------------------
-for suffix in ".files" ".documents"; do
-    if grep -q "${EXPECTED_PKG}${suffix}" <<< "$MANIFEST_TREE"; then
-        ok "provider authority ${EXPECTED_PKG}${suffix}"
+for auth in ${PROVIDER_LIST}; do
+    if grep -q "${auth}" <<< "$MANIFEST_TREE"; then
+        ok "provider authority ${auth}"
     else
-        bad "falta el provider authority ${EXPECTED_PKG}${suffix}"
+        bad "falta el provider authority ${auth}"
     fi
 done
 if grep -q "${FORBIDDEN_PKG}\.files" <<< "$MANIFEST_TREE"; then
