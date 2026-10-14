@@ -1,0 +1,191 @@
+# =============================================================================
+# PtyBox - build.yml
+#
+# Compila los APKs de PtyBox (com.ptybox) y verifica que NO colisionan con la
+# app Termux original del dispositivo.
+#
+# Sustituye al workflow `debug_build.yml` de upstream (movido a
+# .github/workflows/_upstream_disabled/) que adjuntaba APK con nomenclatura
+# `termux-app_*`.
+#
+# Secrets requeridos (Settings > Secrets and variables > Actions):
+#   PTYBOX_KEYSTORE_B64    -> base64 -w0 del .jks
+#   PTYBOX_STORE_PASSWORD
+#   PTYBOX_KEY_ALIAS
+#   PTYBOX_KEY_PASSWORD
+# Si faltan, la build usa la clave de depuracion estandar y lo avisa.
+#
+# Para que los pull_request desde forks externos puedan ejecutar el workflow
+# hace falta un token: crea un PAT con scope `public_repo` y guardalo como
+# secret PTYBOX_PR_TOKEN. Sin el, GitHub desactiva el workflow en PRs de forks.
+# =============================================================================
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      package_variant:
+        description: "Variante del bootstrap"
+        default: "apt-android-7"
+        type: choice
+        options: [ apt-android-7, apt-android-5 ]
+
+concurrency:
+  group: ptybox-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERMUX_PACKAGE_VARIANT: ${{ github.event.inputs.package_variant || 'apt-android-7' }}
+  PTYBOX_PKG: com.ptybox
+  PTYBOX_NAME: PtyBox
+
+jobs:
+  build:
+    name: Build APKs (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # arm64-v8a es lo que usa practicamente todo el mundo; universal cubre
+        # el resto. Quitar lineas de la matriz para builds mas rapidos.
+        abi: [ arm64-v8a, universal ]
+
+    steps:
+      - name: Clonar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache de Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/build-cache
+          key: ptybox-gradle-${{ runner.os }}-${{ hashFiles('**/build.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ptybox-gradle-${{ runner.os }}-
+
+      - name: Decodificar el keystore de PtyBox
+        # La clave de upstream (testkey_untrusted.jks) es PUBLICA: no la usamos.
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.PTYBOX_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64}" ]; then
+            echo "::warning::PTYBOX_KEYSTORE_B64 no configurado: se usara la clave de depuracion."
+            exit 0
+          fi
+          echo "${KEYSTORE_B64}" | base64 -d > ptybox-release.jks
+          chmod 600 ptybox-release.jks
+          {
+            echo "storeFile=ptybox-release.jks"
+            echo "storePassword=${{ secrets.PTYBOX_STORE_PASSWORD }}"
+            echo "keyAlias=${{ secrets.PTYBOX_KEY_ALIAS }}"
+            echo "keyPassword=${{ secrets.PTYBOX_KEY_PASSWORD }}"
+          } > keystore.properties
+          echo "::notice::keystore de PtyBox cargado"
+
+      - name: Cache del bootstrap (zip oficial, sin parchear)
+        uses: actions/cache@v4
+        with:
+          path: build/ptybox-bootstrap-cache
+          key: ptybox-bootstrap-${{ env.TERMUX_PACKAGE_VARIANT }}-${{ hashFiles('scripts/patch_bootstrap.py') }}
+          restore-keys: ptybox-bootstrap-${{ env.TERMUX_PACKAGE_VARIANT }}-
+
+      - name: Comprobar invariantes y aislamiento
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/check_invariants.sh
+          ./scripts/check_no_termux_leaks.sh
+
+      - name: Parchear el bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/ptybox-bootstrap-cache
+          # Descarga, verifica el SHA-256 oficial, sustituye com.termux ->
+          # com.ptybox byte a byte e inyecta ptybox-prefix-fix.
+          ./scripts/patch_bootstrap.py
+          echo "--- assets generados ---"
+          find app/src/main -name 'bootstrap-*.zip' -exec ls -lh {} \;
+
+      - name: Compilar
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERMUX_APP_VERSION_NAME="$(grep -m1 -oP 'versionName "\K[^"]+' app/build.gradle)"
+          echo "versionName: ${TERMUX_APP_VERSION_NAME}"
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Recolectar APKs
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(grep -m1 -oP 'versionName "\K[^"]+' app/build.gradle)-${TERMUX_PACKAGE_VARIANT}-github"
+          mkdir -p dist
+          shopt -s nullglob
+          found=0
+          for f in app/build/outputs/apk/debug/*.apk; do
+            base="$(basename "$f")"
+            newname="${base/termux-app_/ptybox-app_}"
+            newname="${newname/debug/${TAG}}"
+            cp "$f" "dist/${newname}"
+            found=$((found+1))
+          done
+          if [ "${found}" -eq 0 ]; then
+            echo "::error::No se encontro ningun APK en app/build/outputs/apk/debug"
+            ls -la app/build/outputs/apk/debug || true
+            exit 1
+          fi
+          ls -lh dist/
+
+      - name: Verificar aislamiento respecto a Termux
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for apk in dist/*.apk; do
+            echo "=============================================="
+            echo "Verificando $(basename "$apk")"
+            echo "=============================================="
+            ./scripts/verify_apk.sh "$apk" "${PTYBOX_PKG}"
+          done
+
+      - name: sha256sums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.apk > "ptybox-app_sha256sums.txt"
+          cat ptybox-app_sha256sums.txt
+
+      - name: Subir artefactos
+        uses: actions/upload-artifact@v6
+        with:
+          name: ptybox-app-${{ env.TERMUX_PACKAGE_VARIANT }}-${{ matrix.abi }}-${{ github.sha }}
+          path: |
+            dist/*.apk
+            dist/ptybox-app_sha256sums.txt
+          retention-days: 30
+
+      - name: Publicar en el release (solo tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

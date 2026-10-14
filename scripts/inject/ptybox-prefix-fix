@@ -1,0 +1,101 @@
+#!/data/data/com.termux/files/usr/bin/sh
+#
+# PtyBox - ptybox-prefix-fix
+# ==========================
+# Los .deb del repositorio oficial de termux-packages se compilan con el prefijo
+# /data/data/com.termux/files/usr horneado dentro de los binarios (RUNPATH del
+# ELF, rutas en scripts, inventarios de dpkg...). En PtyBox el prefijo es
+# /data/data/com.ptybox/files/usr.
+#
+# "com.termux" y "com.ptybox" miden ambos 10 caracteres, asi que la sustitucion
+# puede hacerse byte a byte: ningun offset cambia y los ELF siguen siendo
+# validos. Este script aplica esa sustitucion a los ficheros recien instalados.
+#
+# Se invoca automaticamente desde el trigger de dpkg:
+#     $PREFIX/etc/apt/apt.conf.d/90ptybox-prefix-fix
+#
+# Uso manual:
+#     ptybox-prefix-fix            # solo lo mas nuevo que el ultimo sellado
+#     ptybox-prefix-fix --all      # recorrido completo de $PREFIX
+#     ptybox-prefix-fix /otra/ruta [...]
+#     ptybox-prefix-fix --quiet   # sin salida por pantalla (uso en el trigger)
+#
+set -eu
+
+PREFIX="${PTYBOX_PREFIX:-/data/data/com.ptybox/files/usr}"
+STAMP_DIR="${PREFIX}/var/lib/ptybox"
+STAMP="${STAMP_DIR}/prefix-fix.stamp"
+LOG="${PREFIX}/var/log/ptybox-prefix-fix.log"
+
+PATTERN='com\.termux'
+REPLACEMENT='com.ptybox'
+
+usage() {
+    sed -n '2,22p' "$0" | sed 's/^#\{1,\} \{0,1\}//'
+}
+
+log() {
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "${LOG}" 2>/dev/null || true
+}
+
+scan_all=0
+quiet=0
+targets=""
+for arg in "$@"; do
+    case "${arg}" in
+        -a|--all) scan_all=1 ;;
+        -q|--quiet) quiet=1 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) printf 'ptybox-prefix-fix: opcion desconocida: %s\n' "${arg}" >&2; exit 2 ;;
+        *) targets="${targets} ${arg}" ;;
+    esac
+done
+[ -n "${targets}" ] || targets="${PREFIX}"
+
+say() { [ "${quiet}" -eq 1 ] || printf '%s\n' "$*"; }
+
+if [ ! -d "${PREFIX}" ]; then
+    say "ptybox-prefix-fix: ${PREFIX} no existe, nada que hacer."
+    exit 0
+fi
+
+mkdir -p "${STAMP_DIR}" "$(dirname "${LOG}")"
+if [ ! -f "${STAMP}" ]; then
+    # Primer uso: recorrido completo. No encontrara restos (el bootstrap ya va
+    # parcheado) y a partir de aqui solo se mira lo mas nuevo que el sellado.
+    scan_all=1
+    : > "${STAMP}" 2>/dev/null || true
+fi
+
+NEWER=""
+[ "${scan_all}" -eq 1 ] || NEWER="-newer ${STAMP}"
+
+list="${STAMP_DIR}/prefix-fix.list"
+: > "${list}"
+trap 'rm -f "${list}"' EXIT INT TERM
+
+total_patched=0
+for root in ${targets}; do
+    [ -e "${root}" ] || continue
+    # shellcheck disable=SC2086
+    find "${root}" ${NEWER} -type f -print0 2>/dev/null \
+        | xargs -0 -r grep -lZ --binary-files=text -a "${PATTERN}" 2>/dev/null > "${list}" || true
+
+    n=$(tr -dc '\000' < "${list}" 2>/dev/null | wc -c)
+    [ "${n}" -gt 0 ] || continue
+
+    xargs -0 -r sed -i -e "s/${PATTERN}/${REPLACEMENT}/g" < "${list}" 2>/dev/null || true
+    total_patched=$((total_patched + n))
+    say "ptybox-prefix-fix: ${n} ficheros parcheados bajo ${root}"
+    log "parcheados ${n} ficheros bajo ${root}"
+done
+
+if [ "${total_patched}" -eq 0 ]; then
+    say "ptybox-prefix-fix: sin restos de com.termux"
+fi
+# El sellado se actualiza AL FINAL para que la siguiente pasada compare contra
+# el momento en que termino esta. Si se tocara al principio, los ficheros
+# instalados justo antes de ejecutarse seescaparian.
+touch "${STAMP}" 2>/dev/null || true
+log "escaneo terminado, total parcheado: ${total_patched}"
+exit 0

@@ -37,3 +37,18 @@ local.properties
 .swp
 ehthumbs.db
 Thumbs.db
+
+# --- PtyBox ------------------------------------------------------------------
+# Bootstrap parcheado: lo genera scripts/patch_bootstrap.py en cada build
+# (30 MiB x 4 ABI). No debe estar en el repositorio.
+app/src/main/*/assets/bootstrap-*.zip
+build/ptybox-bootstrap-cache/
+
+# Clave de firma de PtyBox: NUNCA en el repositorio
+keystore.properties
+ptybox-release.jks
+*.jks
+*.keystore
+
+# Credenciales
+credentials.txt

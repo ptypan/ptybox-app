@@ -1,0 +1,10 @@
+# PtyBox - trigger de dpkg/apt
+#
+# Inyectado por scripts/patch_bootstrap.py dentro del bootstrap en
+# $PREFIX/etc/apt/apt.conf.d/90ptybox-prefix-fix
+#
+# Tras cada transaccion de dpkg, parchea los binarios recien instalados para
+# sustituir el prefijo horneado com.termux por com.ptybox. Sin esto,
+# "pkg install python" traeria un interprete apuntando a /data/data/com.termux.
+DPkg::Post-Invoke { "/data/data/com.ptybox/files/usr/bin/ptybox-prefix-fix --quiet"; };
+DPkg::Pre-Invoke { "/data/data/com.ptybox/files/usr/bin/ptybox-prefix-fix --quiet"; };

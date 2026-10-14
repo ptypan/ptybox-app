@@ -4,7 +4,7 @@ plugins {
 
 ext {
     // The packageVariant defines the bootstrap variant that will be included in the app APK.
-    // This must be supported by com.termux.shared.termux.TermuxBootstrap.PackageVariant or app will
+    // This must be supported by com.ptybox.shared.termux.TermuxBootstrap.PackageVariant or app will
     // crash at startup.
     // Bootstrap of a different variant must not be manually installed by the user after app installation
     // by replacing $PREFIX since app code is dependant on the variant used to build the APK.
@@ -12,11 +12,48 @@ ext {
     packageVariant = System.getenv("TERMUX_PACKAGE_VARIANT") ?: "apt-android-7" // Default: "apt-android-7"
 }
 
+// =============================================================================
+// PtyBox - firma
+//
+// Upstream firma con 'testkey_untrusted.jks', una clave PUBLICA compartida con
+// toda la comunidad. No la usamos: generamos la nuestra con
+// scripts/gen_keystore.sh.
+//
+// La clave se lee de 'keystore.properties' (gitignored) o de variables de
+// entorno, que es como GitHub Actions la inyecta desde los secrets. Si no hay
+// ninguna de las dos, Gradle firma con la clave de depuracion estandar y lo
+// avisa por consola.
+// =============================================================================
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+def keystorePropsLoaded = false
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+    keystorePropsLoaded = true
+}
+def propOrEnv = { String key, String env ->
+    if (keystorePropsLoaded && keystoreProps.containsKey(key)) return keystoreProps.getProperty(key)
+    return System.getenv(env)
+}
+def ksStoreFile = propOrEnv("storeFile", "PTYBOX_STORE_FILE")
+def ksStorePass = propOrEnv("storePassword", "PTYBOX_STORE_PASSWORD")
+def ksKeyAlias = propOrEnv("keyAlias", "PTYBOX_KEY_ALIAS")
+def ksKeyPass = propOrEnv("keyPassword", "PTYBOX_KEY_PASSWORD")
+def hasReleaseSigning = ksStoreFile != null && ksStorePass != null && ksKeyAlias != null && ksKeyPass != null
+
+if (!hasReleaseSigning) {
+    logger.lifecycle("[PtyBox] No hay keystore configurado: se usara la clave de depuracion. " +
+        "Los APKs NO serian instalables como actualizacion de una release firmada.")
+}
+
 android {
-    namespace "com.termux"
+    namespace "com.ptybox"
+    // F1B: el paquete Android es nuestro. El namespace de Java coincide con el
+    // applicationId para que TermuxConstants.*_ACTIVITY_NAME / *_SERVICE_NAME
+    // (que se derivan de TERMUX_PACKAGE_NAME) resuelvan a clases reales.
+    applicationId "com.ptybox"
 
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
-    ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: project.properties.ndkVersion
     def appVersionName = System.getenv("TERMUX_APP_VERSION_NAME") ?: ""
     def apkVersionTag = System.getenv("TERMUX_APK_VERSION_TAG") ?: ""
     def splitAPKsForDebugBuilds = System.getenv("TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS") ?: "1"
@@ -43,28 +80,22 @@ android {
     defaultConfig {
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 118
-        versionName "0.118.0"
+        versionCode 1180
+        versionName "0.118.0-ptybox1"
 
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
 
         buildConfigField "String", "TERMUX_PACKAGE_VARIANT", "\"" + project.ext.packageVariant + "\"" // Used by TermuxApplication class
 
-        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
-        manifestPlaceholders.TERMUX_APP_NAME = "Termux"
-        manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
-        manifestPlaceholders.TERMUX_BOOT_APP_NAME = "Termux:Boot"
-        manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "Termux:Float"
-        manifestPlaceholders.TERMUX_STYLING_APP_NAME = "Termux:Styling"
-        manifestPlaceholders.TERMUX_TASKER_APP_NAME = "Termux:Tasker"
-        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "Termux:Widget"
-
-        externalNativeBuild {
-            ndkBuild {
-                cFlags "-std=c11", "-Wall", "-Wextra", "-Werror", "-Os", "-fno-stack-protector", "-Wl,--gc-sections"
-            }
-        }
+        manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.ptybox"
+        manifestPlaceholders.TERMUX_APP_NAME = "PtyBox"
+        manifestPlaceholders.TERMUX_API_APP_NAME = "PtyBox:API"
+        manifestPlaceholders.TERMUX_BOOT_APP_NAME = "PtyBox:Boot"
+        manifestPlaceholders.TERMUX_FLOAT_APP_NAME = "PtyBox:Float"
+        manifestPlaceholders.TERMUX_STYLING_APP_NAME = "PtyBox:Styling"
+        manifestPlaceholders.TERMUX_TASKER_APP_NAME = "PtyBox:Tasker"
+        manifestPlaceholders.TERMUX_WIDGET_APP_NAME = "PtyBox:Widget"
 
         splits {
             abi {
@@ -78,11 +109,21 @@ android {
     }
 
     signingConfigs {
-        debug {
-            storeFile file('testkey_untrusted.jks')
-            keyAlias 'alias'
-            storePassword 'xrj45yWGLbsO7W0v'
-            keyPassword 'xrj45yWGLbsO7W0v'
+        // Upstream: storeFile file('testkey_untrusted.jks') con alias 'alias'.
+        // PtyBox usa una clave propia creada por scripts/gen_keystore.sh.
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(ksStoreFile)
+                storePassword ksStorePass
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPass
+            }
+            debug {
+                storeFile rootProject.file(ksStoreFile)
+                storePassword ksStorePass
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPass
+            }
         }
     }
 
@@ -91,10 +132,11 @@ android {
             minifyEnabled true
             shrinkResources false // Reproducible builds
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) signingConfig signingConfigs.release
         }
 
         debug {
-            signingConfig signingConfigs.debug
+            if (hasReleaseSigning) signingConfig signingConfigs.debug
         }
     }
 
@@ -106,11 +148,9 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    externalNativeBuild {
-        ndkBuild {
-            path "src/main/cpp/Android.mk"
-        }
-    }
+    // F1B (PtyBox): este modulo ya no usa NDK. El bootstrap se carga desde
+    // src/main/<abi>/assets/bootstrap-<abi>.zip (ver TermuxInstaller.loadZipBytes)
+    // y el codigo nativo se elimino por completo de este modulo.
 
     lint {
         disable 'ProtectedPermissions'
@@ -132,10 +172,10 @@ android {
         variant.outputs.all { output ->
             if (variant.buildType.name == "debug") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("ptybox-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "debug") + "_" + (abi ? abi : "universal") + ".apk")
             } else if (variant.buildType.name == "release") {
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)
-                outputFileName = new File("termux-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
+                outputFileName = new File("ptybox-app_" + (apkVersionTag ? apkVersionTag : project.ext.packageVariant + "-" + "release") + "_" + (abi ? abi : "universal") + ".apk")
             }
         }
     }
@@ -163,81 +203,50 @@ def validateVersionName(String versionName) {
     if (!java.util.regex.Pattern.matches("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?\$", versionName))
         throw new GradleException("The versionName '"  + versionName + "' is not a valid version as per semantic version '2.0.0' spec in the format 'major.minor.patch(-prerelease)(+buildmetadata)'. https://semver.org/spec/v2.0.0.html.")
 }
+// =============================================================================
+// PtyBox F1B - Bootstrap parcheado, servido desde assets por ABI.
+//
+// Ya no compilamos libtermux-bootstrap.so con el NDK: el zip del bootstrap se
+// parchea fuera de Gradle y se coloca en src/main/<abi>/assets/. Asi el modulo
+// app no necesita NDK y cada APK por ABI lleva solo su propio zip.
+//
+// El parcheo sustituye "com.termux" -> "com.ptybox" byte a byte. Es OBLIGATORIO
+// que ambas cadenas midan lo mismo (10 caracteres), ver scripts/check_invariants.sh
+// =============================================================================
+task patchBootstraps {
+    description = "Descarga, verifica y parchea el bootstrap de Termux hacia assets/<abi>/"
+    group = "build setup"
+    doLast {
+        def packageVariant = project.ext.packageVariant
+        def patcher = rootProject.file("scripts/patch_bootstrap.py")
+        if (!patcher.exists())
+            throw new GradleException("No se encuentra el parcheador: " + patcher)
 
-def downloadBootstrap(String arch, String expectedChecksum, String version) {
-    def digest = java.security.MessageDigest.getInstance("SHA-256")
-
-    def localUrl = "src/main/cpp/bootstrap-" + arch + ".zip"
-    def file = new File(projectDir, localUrl)
-    if (file.exists()) {
-        def buffer = new byte[8192]
-        def input = new FileInputStream(file)
-        while (true) {
-            def readBytes = input.read(buffer)
-            if (readBytes < 0) break
-            digest.update(buffer, 0, readBytes)
-        }
-        def checksum = new BigInteger(1, digest.digest()).toString(16)
-        while (checksum.length() < 64) { checksum = "0" + checksum }
-        if (checksum == expectedChecksum) {
-            return
-        } else {
-            logger.quiet("Deleting old local file with wrong hash: " + localUrl + ": expected: " + expectedChecksum + ", actual: " + checksum)
-            file.delete()
-        }
-    }
-
-    def remoteUrl = "https://github.com/termux/termux-packages/releases/download/bootstrap-" + version + "/bootstrap-" + arch + ".zip"
-    logger.quiet("Downloading " + remoteUrl + " ...")
-
-    file.parentFile.mkdirs()
-    def out = new BufferedOutputStream(new FileOutputStream(file))
-
-    def connection = new URL(remoteUrl).openConnection()
-    connection.setInstanceFollowRedirects(true)
-    def digestStream = new java.security.DigestInputStream(connection.inputStream, digest)
-    out << digestStream
-    out.close()
-
-    def checksum = new BigInteger(1, digest.digest()).toString(16)
-    while (checksum.length() < 64) { checksum = "0" + checksum }
-    if (checksum != expectedChecksum) {
-        file.delete()
-        throw new GradleException("Wrong checksum for " + remoteUrl + ": expected: " + expectedChecksum + ", actual: " + checksum)
+        def env = [
+            "PTYBOX_BOOTSTRAP_PACKAGE_VARIANT": packageVariant,
+            "PTYBOX_BOOTSTRAP_OUTPUT_DIR": projectDir.absolutePath,
+            "PTYBOX_BOOTSTRAP_CACHE_DIR"  : rootProject.file("build/ptybox-bootstrap-cache").absolutePath
+        ]
+        def proc = new ProcessBuilder(["python3", patcher.absolutePath])
+        proc.environment().putAll(env)
+        proc.inheritIO()
+        proc.directory(rootProject.projectDir)
+        def exitCode = proc.waitFor()
+        if (exitCode != 0)
+            throw new GradleException("patch_bootstrap.py fallo con codigo " + exitCode)
     }
 }
 
 clean {
     doLast {
-        def tree = fileTree(new File(projectDir, 'src/main/cpp'))
+        def tree = fileTree(projectDir)
         tree.include 'bootstrap-*.zip'
         tree.each { it.delete() }
     }
 }
 
-task downloadBootstraps() {
-    doLast {
-        def packageVariant = project.ext.packageVariant
-        if (packageVariant == "apt-android-7") {
-            def version = "2026.02.12-r1" + "%2B" + "apt.android-7"
-            downloadBootstrap("aarch64", "ea2aeba8819e517db711f8c32369e89e7c52cee73e07930ff91185e1ab93f4f3", version)
-            downloadBootstrap("arm", "a38f4d3b2f735f83be2bf54eff463e86dc32a3e2f9f861c1557c4378d249c018", version)
-            downloadBootstrap("i686", "f5bc0b025b9f3b420b5fcaeefc064f888f5f22a0d6fd7090f4aac0c33eb3555b", version)
-            downloadBootstrap("x86_64", "b7fd0f2e3a4de534be3144f9f91acc768630fc463eaf134ab2e64c545e834f7a", version)
-        } else if (packageVariant == "apt-android-5") {
-            def version = "2022.04.28-r6" + "+" + packageVariant
-            downloadBootstrap("aarch64", "913609d439415c828c5640be1b0561467e539cb1c7080662decaaca2fb4820e7", version)
-            downloadBootstrap("arm", "26bfb45304c946170db69108e5eb6e3641aad751406ce106c80df80cad2eccf8", version)
-            downloadBootstrap("i686", "46dcfeb5eef67ba765498db9fe4c50dc4690805139aa0dd141a9d8ee0693cd27", version)
-            downloadBootstrap("x86_64", "615b590679ee6cd885b7fd2ff9473c845e920f9b422f790bb158c63fe42b8481", version)
-        } else {
-            throw new GradleException("Unsupported TERMUX_PACKAGE_VARIANT \"" + packageVariant + "\"")
-        }
-    }
-}
-
 afterEvaluate {
     android.applicationVariants.all { variant ->
-        variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
+        variant.javaCompileProvider.get().dependsOn(patchBootstraps)
     }
 }
