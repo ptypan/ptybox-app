@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # PtyBox - gen_keystore.sh
 # Genera el keystore de firma de PtyBox.
