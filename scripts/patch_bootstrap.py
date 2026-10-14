@@ -21,7 +21,7 @@ Uso
 
 Variables de entorno (las inyecta el Gradle task `patchBootstraps`):
     PTYBOX_BOOTSTRAP_PACKAGE_VARIANT  apt-android-7 | apt-android-5
-    PTYBOX_BOOTSTRAP_OUTPUT_DIR       app/ (donde crear src/main/<abi>/assets/)
+    PTYBOX_BOOTSTRAP_OUTPUT_DIR       app/ (donde crear src/main/assets/)
     PTYBOX_BOOTSTRAP_CACHE_DIR        donde cachear los zips oficiales
 """
 import argparse
@@ -244,7 +244,11 @@ def main():
     for arch in archs:
         gradle_abi, expected_sha = table[arch]
         official = ensure_official_zip(arch, version, expected_sha, cache_dir)
-        assets_dir = os.path.join(out_dir, "src", "main", gradle_abi, "assets")
+# AGP no tiene sourceSets de assets por ABI: src/main/<abi>/assets NO se
+# empaqueta (a diferencia de jniLibs/<abi>/). Los 4 zips van juntos a
+# src/main/assets/ y TermuxInstaller elige por ABI en tiempo de ejecucion.
+# Cada APK por ABI lleva los 4 (~110 MiB extra), pero funciona con splits.
+        assets_dir = os.path.join(out_dir, "src", "main", "assets")
         patched = os.path.join(assets_dir, f"bootstrap-{arch}.zip")
         os.makedirs(assets_dir, exist_ok=True)
 

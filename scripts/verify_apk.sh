@@ -74,7 +74,9 @@ fi
 if [ "${SKIP_PERMISSION_CHECK}" = "1" ]; then
     echo "  ---   comprobacion del permiso RUN_COMMAND omitida"
 else
-    if grep -q "${EXPECTED_PKG}\.permission\.RUN_COMMAND" <<< "$BADGING"; then
+    # Se busca en el manifiesto fusionado, no en el badging: aapt dump badging
+    # no lista de forma fiable las declaraciones <permission>.
+    if grep -q "${EXPECTED_PKG}\.permission\.RUN_COMMAND" <<< "$MANIFEST_TREE"; then
         ok "permiso ${EXPECTED_PKG}.permission.RUN_COMMAND declarado"
     else
         bad "falta el permiso ${EXPECTED_PKG}.permission.RUN_COMMAND"
