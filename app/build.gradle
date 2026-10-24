@@ -84,8 +84,8 @@ android {
 
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 1180
-        versionName "0.118.0-ptybox1"
+        versionCode 1181
+        versionName "0.118.0-ptybox2"
 
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
